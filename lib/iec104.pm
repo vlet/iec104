@@ -7,6 +7,7 @@ use Carp;
 use IO::Socket::INET;
 use Event::Lib;
 use Date::Manip;
+use Time::HiRes qw/ gettimeofday tv_interval /;
 
 require Exporter;
 
@@ -29,7 +30,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 ###############################################################################
 
@@ -100,19 +101,23 @@ sub raw2hex {
 	return join (",", map { sprintf "%02X", $_ } unpack("C*",shift));
 }
 
-# convert from cp56_2a format of time to unix (seconds since 1970)
+# convert from cp56_2a format of time to gettimeofday
 sub cp56_2a_2_time {
 	my $data = shift;
 	my @tm = unpack("SC5",$data);
-	return Date_SecsSince1970GMT($tm[4]&0xF,$tm[3]&0x1F,
+	my $tm = Date_SecsSince1970GMT($tm[4]&0xF,$tm[3]&0x1F,
 		2000+($tm[5]&0x7F),$tm[2]&0x1F,$tm[1]&0x3F,int($tm[0]/1000));
+	my $ms = ($tm[0]%1000)*1000;
+	return ($tm,$ms);
 }
 
-# convert from unix time format to cp56_2a
+# convert from gettimeofday format to cp56_2a
 sub time_2_cp56_2a {
 	my $tm = shift;
+	my $ms = shift;
+	$ms    = int($ms/1000);
 	my @tm = localtime($tm);
-	return pack("SC5",$tm[0]*1000,$tm[1],$tm[2]|($tm[8]<<7),
+	return pack("SC5",($tm[0]*1000+$ms),$tm[1],$tm[2]|($tm[8]<<7),
 			  $tm[3]|($tm[6]<<5),++$tm[4],$tm[5]%100);
 }
 
@@ -170,34 +175,51 @@ sub listen {
 # start IEC master session
 sub connect {
 	my $self = shift;
-	my %h = @_;
 	carp "called without a reference" if (!ref($self));
 
 	my $client = IO::Socket::INET->new(
 		Proto => 'tcp',
 		PeerAddr => $self->{ip},
 		PeerPort => $self->{port},
-		Blocking => 1
+		Blocking => 0
 	) or carp $@;
-	unless ($client) {
-		&DEBUG(0,"Can't connect to ",$self->{ip},":",$self->{port});
-		return -1;
+
+	my $main = event_new($client, EV_WRITE, \&on_connect, $self);
+	$main->add(2);
+}
+
+sub on_connect {
+	my ($e,$type,$self) = @_;
+	my $error = 1;
+
+	if ($type == EV_TIMEOUT) {
+		&DEBUG(0,"Can't connect to ",$self->{ip},":",$self->{port},", connection timeout");
+	} elsif ($type == EV_WRITE) {
+		my $client = $e->fh;
+		unless($client->connected) {
+			&DEBUG(0,"Can't connect to ",$self->{ip},":",$self->{port},", connection rejected");
+		} else {
+			$self->{retry_count} = 0;
+			$error = 0;
+			&DEBUG(1,"connected to ", $self->{ip},":",$self->{port});
+			my $sid  = &get_id($client);
+			my $main = event_new($client, EV_READ|EV_PERSIST,
+				\&handle_client, $self, $sid);
+			$self->init_new_conn(
+				sid     => $sid,
+				event   => $main,
+				type    => "MASTER"
+			);
+			$main->add;
+
+			$self->frame_u_send($sid,"STARTDTACT");
+		}
 	}
-	$self->{retry_count} = 0;
 
-	$client->blocking(0);
-	&DEBUG(1,"connected to ", $self->{ip},":",$self->{port});
-	my $sid  = &get_id($client);
-	my $main = event_new($client, EV_READ|EV_PERSIST,
-		\&handle_client, $self, $sid);
-	$self->init_new_conn(
-		sid     => $sid,
-		event   => $main,
-		type    => "MASTER"
-	);
-	$main->add;
-
-	$self->frame_u_send($sid,"STARTDTACT");
+	if ($error && $self->{persist}) {
+		my $timer = timer_new(\&reconnect,$self);
+		$timer->add($self->{retry_timeout});
+	}
 }
 
 # Main event loop
@@ -225,7 +247,7 @@ sub sync_time {
 		next if (defined($csid) && $csid ne $sid);
 		$s = \%{$self->{sids}{$sid}};
 		&DEBUG(2,"Sync time for CA: ",$s->{ca},", My current time: ", time());
-		$data = pack("C2S3C",103,1,$cause,$s->{ca},1,0) . &time_2_cp56_2a(time());
+		$data = pack("C2S3C",103,1,$cause,$s->{ca},1,0) . &time_2_cp56_2a(gettimeofday);
 		$self->frame_i_send($sid,$data);
 	}
 }
@@ -404,11 +426,7 @@ sub disconnect {
 		delete $self->{sids}{$sid};
 		if ($self->{type} eq "master" && $self->{persist} != 0) {
 			&DEBUG(11,"persist is true, reconnect...");
-			my $ret = $self->connect();
-			if ($ret == -1) {
-				my $timer = timer_new(\&reconnect,$self);
-				$timer->add($self->{retry_timeout});
-			}
+			$self->connect();
 		} else {
 			&DEBUG(11,"persist is not true, dont reconnect...");
 		}
@@ -423,10 +441,7 @@ sub reconnect {
 
 	$self->{retry_count}++;
 	&DEBUG(1,"reconnect to ", $self->{ip}, ":",$self->{port}, " after fail... Attempt: ",$self->{retry_count});
-	if ($self->connect() == -1) {
-		$timer = timer_new(\&reconnect,$self);
-		$timer->add($self->{retry_timeout});
-	}
+	$self->connect;
 }
 
 # public method send()
@@ -802,7 +817,7 @@ sub default_read_cb {
 
 sub default_write_cb {
 	DEBUG(1,"default_write_cb()");
-	return ("TS"=>{"1"=>["0",time]});
+	return ("TS"=>{"1"=>["0",gettimeofday]});
 }
 
 sub parse_asdu_type_100 {
@@ -873,7 +888,7 @@ sub parse_asdu_type_103 {
 		# send accept and current time
 		$s->{ca} = $i->{ca};
 		my $data = pack("C2S3C",103,1,7,$i->{ca},
-			$i->{obj}{1}{ioa},$i->{obj}{1}{ioa2}) . &time_2_cp56_2a(time());
+			$i->{obj}{1}{ioa},$i->{obj}{1}{ioa2}) . &time_2_cp56_2a(gettimeofday);
 		$self->frame_i_send($sid,$data);
 	} elsif ($i->{cause} == 3) {
 		&DEBUG(2,"[103] sporadic");
@@ -882,8 +897,8 @@ sub parse_asdu_type_103 {
 		$s->{sync_timer}->add($s->{sync_timeout});
 	} elsif ($i->{cause} == 7) {
 		&DEBUG(2,"[103] accept of activation");
-		my $tm = &cp56_2a_2_time($i->{obj}{1}{data});
-		my $time_diff = time() - $tm;
+		my ($tm,$ms) = &cp56_2a_2_time($i->{obj}{1}{data});
+		my $time_diff = tv_interval([$tm,$ms]);
 		&DEBUG(1,"CA: ",$i->{ca},"; KP unix time: ", $tm, ", Diff: ",$time_diff );
 		$s->{time_diff} = $time_diff;
 		# Start timer of Sync
@@ -895,7 +910,7 @@ sub parse_asdu_type_103 {
 }
 
 sub parse_asdu_type_0_44 {
-	my ($addr,$value,$tm);
+	my ($addr,$value,$tm,$ms);
 	my $self = shift;
 	my $sid  = shift;
 
@@ -908,20 +923,29 @@ sub parse_asdu_type_0_44 {
 		if ($i->{id} == 30) {
 			$value = unpack("C",$i->{obj}{$j}{data});
 			$value &= 1;
-			$tm = cp56_2a_2_time(substr($i->{obj}{$j}{data},1,7)) + $s->{time_diff};
+			($tm,$ms) = cp56_2a_2_time(substr($i->{obj}{$j}{data},1,7));
 		} elsif ($i->{id} == 35) {
 			$value = unpack("s",$i->{obj}{$j}{data});
-			$tm = cp56_2a_2_time(substr($i->{obj}{$j}{data},3,7)) + $s->{time_diff};
+			($tm,$ms) = cp56_2a_2_time(substr($i->{obj}{$j}{data},3,7));
 		} elsif ($i->{id} == 36) {
 			$value = unpack("f",$i->{obj}{$j}{data});
-			$tm = cp56_2a_2_time(substr($i->{obj}{$j}{data},5,7)) + $s->{time_diff};
+			($tm,$ms) = cp56_2a_2_time(substr($i->{obj}{$j}{data},5,7));
 		} elsif ($i->{id} == 37) {
 			$value = unpack("L",$i->{obj}{$j}{data});
-			$tm = cp56_2a_2_time(substr($i->{obj}{$j}{data},5,7)) + $s->{time_diff};
+			($tm,$ms) = cp56_2a_2_time(substr($i->{obj}{$j}{data},5,7));
+		}
+		$tm += int($s->{time_diff});
+		$ms += int(($s->{time_diff} - int($s->{time_diff}))*1000000);
+		if ($ms > 1000000) {
+			$ms -= 1000000;
+			$tm++;
+		} elsif ($ms < 0) {
+			$ms += 1000000;
+			$tm--;
 		}
 		$addr = $i->{obj}{$j}{ioa}+65536*$i->{obj}{$j}{ioa2};
 
-		$result{$type}->{$addr} = [$value, $tm];
+		$result{$type}->{$addr} = [$value, $tm, $ms];
 		&DEBUG(8,"ioa: ",$addr, ", val: ", $value, " time: ", scalar localtime($tm), ";");
 	}
 	&{$s->{rcb}}($self,%result);
@@ -941,16 +965,16 @@ sub send_asdu_type_0_44 {
 		$cnt++;
 		if ($id == 30) {
 			$data .= pack("SC2",($key%65536),int($key/65536),$d->{$key}->[0]&1) .
-				 &time_2_cp56_2a($d->{$key}->[1]);
+				 &time_2_cp56_2a($d->{$key}->[1],$d->{$key}->[2]);
 		} elsif ($id == 35) {
 			$data .= pack("SCSC",($key%65536),int($key/65536),$d->{$key}->[0],0) .
-				 &time_2_cp56_2a($d->{$key}->[1]);
+				 &time_2_cp56_2a($d->{$key}->[1],$d->{$key}->[2]);
 		} elsif ($id == 36) {
 			$data .= pack("SCfC",($key%65536),int($key/65536),$d->{$key}->[0],0) .
-				 &time_2_cp56_2a($d->{$key}->[1]);
+				 &time_2_cp56_2a($d->{$key}->[1],$d->{$key}->[2]);
 		} elsif ($id == 37) {
 			$data .= pack("SCLC",($key%65536),int($key/65536),$d->{$key}->[0],0) .
-				 &time_2_cp56_2a($d->{$key}->[1]);
+				 &time_2_cp56_2a($d->{$key}->[1],$d->{$key}->[2]);
 		}
 		&DEBUG(5,"$cnt|--> IOA:",$key,", VALUE:",$d->{$key}->[0],
 			", TIME:",$d->{$key}->[1]," size of pack: ", length($data));
@@ -976,14 +1000,15 @@ iec104 - Perl implementation of IEC 60870-5-104 standard (server and client)
 =head1 SYNOPSIS
 
   use iec104;
+  use Time::HiRes;
 
   sub send_all_data {
 	my $self = shift;
   	my %DATA = (TI=>{},TS=>{},TII=>{});
 	
-	$DATA{TI}->{1}  = [12.34,time()]; # Tele Information (real value of physical measurement)
-	$DATA{TS}->{2}  = [0,time()];	  # Tele Signalization (boolean value)
-	$DATA{TII}->{3} = [34567,time()]; # Tele Information Integral (32-bit counter)
+	$DATA{TI}->{1}  = [12.34,gettimeofday]; # Tele Information (real value of physical measurement)
+	$DATA{TS}->{2}  = [0,gettimeofday];	  # Tele Signalization (boolean value)
+	$DATA{TII}->{3} = [34567,gettimeofday]; # Tele Information Integral (32-bit counter)
 
 	return %DATA;
   }
@@ -1020,7 +1045,7 @@ iec104->new(...) accept following variables:
 
 * ca   - common address. Default 1
 
-* write_callback - (slave only) ref to callback function, that returns a list with two vars: reference to class and hash with data. Hash format is as following: %HASH = ("TI" =>  { address=>[value,timestamp], ... },"TS" => { address=>[value,timestamp], ... },"TII" => { address=>[value,timestamp], ... }); This function called when slave receive common interogation request from master (ASDU=100).
+* write_callback - (slave only) ref to callback function, that returns a list with two vars: reference to class and hash with data. Hash format is as following: %HASH = ("TI" =>  { address=>[value,timestamp,microseconds], ... },"TS" => { address=>[value,timestamp,microseconds], ... },"TII" => { address=>[value,timestamp,microseconds], ... }); This function called when slave receive common interogation request from master (ASDU=100).
 
 * read_callback - (master only) ref to callback function, that receive a list (same format as for write_callback)
 
@@ -1073,9 +1098,10 @@ None by default.
 			print $key,"\n";
 			foreach my $addr (keys %{$hash{$key}}) {
 				print "\t";
-				print "address:\t",   $addr, "\n\t";
-				print "value:\t",     $hash{$key}->{$addr}->[0], "\n\t";
-				print "timestamp:\t", $hash{$key}->{$addr}->[1], "\n";
+				print "address:\t",      $addr, "\n\t";
+				print "value:\t",        $hash{$key}->{$addr}->[0], "\n\t";
+				print "seconds:\t",      $hash{$key}->{$addr}->[1], "\n";
+				print "microseconds:\t", $hash{$key}->{$addr}->[2], "\n";
 			}
 		}
 	}
