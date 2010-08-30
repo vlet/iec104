@@ -1,16 +1,14 @@
-iec104 version 0.01
-===================
+iec104 - Perl implementation of IEC 60870-5-104 standard (server and client)
 
-The README is used to introduce the module and provide instructions on
-how to install the module, any machine dependencies it may have (for
-example C compilers and installed libraries) and any other information
-that should be provided before the module is installed.
+DESCRIPTION
 
-A README file is required for CPAN modules since CPAN extracts the
-README file from a module distribution so that people browsing the
-archive can use it get an idea of the modules uses. It is usually a
-good idea to provide version information here so that people can
-decide whether fixes for the module are worth downloading.
+This module implement IEC 60870-5-104 standard (also known as IEC 870-5-104).
+IEC 870-5-104 is a network access for IEC 60870-5-101 using standard transport profiles (TCP/IP),
+its application layer is based on IEC 60870-5-101. IEC 60870-5-104 enables communication between
+control station and substation via a standard TCP/IP network. The TCP protocol is used for
+connection-oriented secure data transmission.
+
+Current implementation supports only ASDU NN 30,35,36,37,100,103. Its enough for now.
 
 INSTALLATION
 
@@ -24,14 +22,15 @@ To install this module type the following:
 DEPENDENCIES
 
 This module requires these other modules and libraries:
-
-  blah blah blah
+    Event::Lib => 1.03,
+    IO::Socket::INET => 1.29,
+    Carp => 1.0,
+    Date::Manip => 1.0
+    Time::HiRes
 
 COPYRIGHT AND LICENCE
 
-Put the correct copyright and licence information here.
-
-Copyright (C) 2008 by Vladimir Lettiev
+Copyright (C) 2008-2010 by Vladimir Lettiev
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.8 or,

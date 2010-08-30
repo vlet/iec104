@@ -1,5 +1,9 @@
 Revision history for Perl extension iec104.
 
+0.02  Mon Aug 30 20:41:10 2010
+    - use microseconds from cp56_2a timestamps
+    - non-blocking connect() with timeout
+
 0.01  Thu Mar 13 21:40:19 2008
 	- original version; created by h2xs 1.23 with options
 		-AX -n iec104
