@@ -1,0 +1,6 @@
+Revision history for Perl extension iec104.
+
+0.01  Thu Mar 13 21:40:19 2008
+	- original version; created by h2xs 1.23 with options
+		-AX -n iec104
+
