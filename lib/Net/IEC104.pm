@@ -1,4 +1,4 @@
-package iec104;
+package Net::IEC104;
 
 use 5.008008;
 use strict;
@@ -17,7 +17,7 @@ our @ISA = qw(Exporter);
 # names by default without a very good reason. Use EXPORT_OK instead.
 # Do not simply export all your public functions/methods/constants.
 
-# This allows declaration	use iec104 ':all';
+# This allows declaration use Net::IEC104 ':all';
 # If you do not need this, moving things directly into @EXPORT or @EXPORT_OK
 # will save memory.
 our %EXPORT_TAGS = (
@@ -34,7 +34,7 @@ our @EXPORT = qw(
 
 );
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 ###############################################################################
 
@@ -98,7 +98,7 @@ sub new {
     my $self  = shift;
     my %h     = @_;
     my $class = ref($self) || $self;
-    croak "wrong type of iec104"
+    croak "wrong type of Net::IEC104"
       if ( $h{type} ne "slave" and $h{type} ne "master" );
 
     $h{retry_timeout} = ( exists $h{retry_timeout} ) ? $h{retry_timeout} : 5;
@@ -435,11 +435,13 @@ sub handle_client {
     while (1) {
         if ( $start != 0x68 || length($data) < 3 ) {
 
-            #error in iec104 packet
+            #error in Net::IEC104 packet
             &DEBUG( 11, raw2hex($data) );
             &DEBUG(
-                1, "error in iec104 chunk: START: ",
-                $start, "; LENGTH: ",
+                1,
+                "error in Net::IEC104 chunk: START: ",
+                $start,
+                "; LENGTH: ",
                 defined($length) ? $length : 0,
                 "; DATA SIZE: ",
                 length($data)
@@ -796,11 +798,11 @@ sub flush_send_queue {
     my $self = shift;
     my $sid  = shift;
 
-    #	return if ($#{$self->{sids}{$sid}{s_queue}} == -1);
-    #	for my $i (0 .. $#{$self->{sids}{$sid}{s_queue}}) {
-    #		$ret = $self->frame_i_send($sid,undef);
-    #		last if ($ret != 0);
-    #	}
+    #return if ($#{$self->{sids}{$sid}{s_queue}} == -1);
+    #for my $i (0 .. $#{$self->{sids}{$sid}{s_queue}}) {
+    #$ret = $self->frame_i_send($sid,undef);
+    #last if ($ret != 0);
+    #}
     while ( $#{ $self->{sids}{$sid}{s_queue} } != -1 ) {
         last if ( $self->frame_i_send( $sid, undef ) );
     }
@@ -1220,33 +1222,33 @@ __END__
 
 =head1 NAME
 
-iec104 - Perl implementation of IEC 60870-5-104 standard (server and client)
+Net::IEC104 - Perl implementation of IEC 60870-5-104 standard (server and client)
 
 =head1 SYNOPSIS
 
-  use iec104;
-  use Time::HiRes;
+    use Net::IEC104;
+    use Time::HiRes;
 
-  sub send_all_data {
-	my $self = shift;
-  	my %DATA = (TI=>{},TS=>{},TII=>{});
-	
-	$DATA{TI}->{1}  = [12.34,gettimeofday]; # Tele Information (real value of physical measurement)
-	$DATA{TS}->{2}  = [0,gettimeofday];	  # Tele Signalization (boolean value)
-	$DATA{TII}->{3} = [34567,gettimeofday]; # Tele Information Integral (32-bit counter)
+    sub send_all_data {
+        my $self = shift;
+        my %DATA = (TI=>{},TS=>{},TII=>{});
 
-	return %DATA;
-  }
+        $DATA{TI}->{1}  = [12.34,gettimeofday]; # Tele Information (real value of physical measurement)
+        $DATA{TS}->{2}  = [0,gettimeofday];     # Tele Signalization (boolean value)
+        $DATA{TII}->{3} = [34567,gettimeofday]; # Tele Information Integral (32-bit counter)
 
-  my $srvr_sock = iec104->new(
-	type=>"slave",
-	ip=>"127.0.0.1",
-	port=>"2404",
-	write_callback=>\&send_all_data
-  );
+        return %DATA;
+    }
 
-  $srvr_sock->listen;
-  iec104::main_loop;
+    my $srvr_sock = Net::IEC104->new(
+        type=>"slave",
+        ip=>"127.0.0.1",
+        port=>"2404",
+        write_callback=>\&send_all_data
+    );
+
+    $srvr_sock->listen;
+    Net::IEC104::main_loop;
 
 =head1 DESCRIPTION
 
@@ -1260,7 +1262,7 @@ Current implementation supports only ASDU NN 30,35,36,37,100,103. Its enough for
 
 =head2 CONSTRUCTOR
 
-iec104->new(...) accept following variables:
+Net::IEC104->new(...) accept following variables:
 
 * type - type of station, must be one of "slave" (controlled station) or "master" (control station). Default "slave"
 
@@ -1297,7 +1299,7 @@ iec104->new(...) accept following variables:
 =head2 METHODS
 
 connect()   - master only method. Connect to slave. After succeful connection, its activate transmission (STARTDT)
-	and send common interogation request to slave (ASDU=100).
+    and send common interogation request to slave (ASDU=100).
 
 listen()    - slave only method. Start listen for masters connections.
 
@@ -1313,25 +1315,25 @@ None by default.
 
 =head2 client
 
-	use iec104;
+    use Net::IEC104;
 
-	# Print to stdout all received data;
-	sub take_data_cb {
-		my $self = shift;
-	        my %hash = @_;
-		foreach my $key (keys %hash) {
-			print $key,"\n";
-			foreach my $addr (keys %{$hash{$key}}) {
-				print "\t";
-				print "address:\t",      $addr, "\n\t";
-				print "value:\t",        $hash{$key}->{$addr}->[0], "\n\t";
-				print "seconds:\t",      $hash{$key}->{$addr}->[1], "\n";
-				print "microseconds:\t", $hash{$key}->{$addr}->[2], "\n";
-			}
-		}
-	}
+    # Print to stdout all received data;
+    sub take_data_cb {
+        my $self = shift;
+        my %hash = @_;
+        foreach my $key (keys %hash) {
+            print $key,"\n";
+            foreach my $addr (keys %{$hash{$key}}) {
+                print "\t";
+                print "address:\t",      $addr, "\n\t";
+                print "value:\t",        $hash{$key}->{$addr}->[0], "\n\t";
+                print "seconds:\t",      $hash{$key}->{$addr}->[1], "\n";
+                print "microseconds:\t", $hash{$key}->{$addr}->[2], "\n";
+            }
+        
+    }
 
-	my $master = iec104->new(
+    my $master = Net::IEC104->new(
                 type => "master",
                 ip   => 127.0.0.1,
                 port => 2404,
@@ -1340,10 +1342,10 @@ None by default.
                 k    => 12,
                 persist => 1,
                 read_callback => \&take_data_cb,
-        );
+    );
   
-        $master->connect();
-	iec104::main_loop();
+    $master->connect();
+    Net::IEC104::main_loop();
 
 =head1 SEE ALSO
 
@@ -1355,7 +1357,7 @@ Vladimir Lettiev, E<lt>thecrux@gmail.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2008-2010 by Vladimir Lettiev
+Copyright (C) 2008-2011 by Vladimir Lettiev
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.8 or,

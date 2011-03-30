@@ -2,5 +2,5 @@ Changes
 Makefile.PL
 MANIFEST
 README
-t/iec104.t
-lib/iec104.pm
+t/IEC104.t
+lib/Net/IEC104.pm

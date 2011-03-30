@@ -1,4 +1,4 @@
-iec104 - Perl implementation of IEC 60870-5-104 standard (server and client)
+Net::IEC104 - Perl implementation of IEC 60870-5-104 standard (server and client)
 
 DESCRIPTION
 
@@ -30,7 +30,7 @@ This module requires these other modules and libraries:
 
 COPYRIGHT AND LICENCE
 
-Copyright (C) 2008-2010 by Vladimir Lettiev
+Copyright (C) 2008-2011 by Vladimir Lettiev
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.8 or,
