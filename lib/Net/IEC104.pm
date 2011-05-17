@@ -1330,12 +1330,12 @@ None by default.
                 print "seconds:\t",      $hash{$key}->{$addr}->[1], "\n";
                 print "microseconds:\t", $hash{$key}->{$addr}->[2], "\n";
             }
-        
+        }
     }
 
     my $master = Net::IEC104->new(
                 type => "master",
-                ip   => 127.0.0.1,
+                ip   => "127.0.0.1",
                 port => 2404,
                 ca   => 1,
                 w    => 8,
